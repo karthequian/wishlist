@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/gorilla/mux"
+	log "github.com/sirupsen/logrus"
 	"net/http"
 	"os"
 
@@ -21,40 +23,6 @@ var (
 	)
 )
 
-//Userlist is the list of users
-var userlist = []common.User{
-	common.User{
-		Name:     "Karthik",
-		Password: "helloworld",
-		Username: "karthik",
-		Token:    "20d15fed-42f4-4a71-b9a3-7c7fee78d38d",
-	},
-	common.User{
-		Name:     "Tracey",
-		Password: "helloworld",
-		Username: "tracey",
-		Token:    "4d76c945-a946-4d2b-95a8-281aff55404f",
-	},
-	common.User{
-		Name:     "Carisa",
-		Password: "helloworld",
-		Username: "carisa",
-		Token:    "224b3200-d09b-4881-8a7b-d69d6d8ba543",
-	},
-	common.User{
-		Name:     "Ernest",
-		Password: "helloworld",
-		Username: "ernest",
-		Token:    "2115274e-34bc-4456-a1ee-1c4c171231a9",
-	},
-	common.User{
-		Name:     "Amy",
-		Password: "helloworld",
-		Username: "amy",
-		Token:    "5343b1d3-dfa3-4823-b544-e5907c3585f5",
-	},
-}
-
 var tokenMap map[string]common.User
 
 func init() {
@@ -62,7 +30,7 @@ func init() {
 
 	// Metrics have to be registered to be exposed:
 	prometheus.MustRegister(helloCounter)
-	for _, user := range userlist {
+	for _, user := range common.Userlist {
 		tokenMap[user.Token] = user
 	}
 
@@ -78,7 +46,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	u := r.URL.Query().Get("u")
 	p := r.URL.Query().Get("p")
 
-	for _, user := range userlist {
+	for _, user := range common.Userlist {
 		if user.Username == u {
 			if p == user.Password {
 				returnUser := user
@@ -89,7 +57,19 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	http.Error(w, "Invalid username or password", 500)
+	log.Debugf("Login information was invalid")
+	http.Error(w, "Invalid username or password", 401)
+}
+
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	log.Debugf("Version handler was called")
+	helloCounter.With(prometheus.Labels{"url": "/version"}).Inc()
+	fmt.Fprintf(w, "{'version':'1.0'}")
+}
+func statusHandler(w http.ResponseWriter, r *http.Request) {
+	log.Debugf("Status handler was called")
+	helloCounter.With(prometheus.Labels{"url": "/status"}).Inc()
+	fmt.Fprintf(w, "{'status':'ok'}")
 }
 
 func TokenHandler(w http.ResponseWriter, r *http.Request) {
@@ -103,19 +83,36 @@ func TokenHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, string(jsonuser))
 		return
 	}
-	http.Error(w, "Invalid token", 500)
+	log.Debugf("Invalid token was passed")
+	http.Error(w, "Invalid token", 401)
 
 }
 
+func newHandler(w http.ResponseWriter, r *http.Request) {
+	log.Infof("newhandler was called")
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, "Welcome to the wishlist auth API. Valid endpoints are /login, /token, /version, /status, /metrics")
+
+	helloCounter.With(prometheus.Labels{"url": "/list"}).Inc()
+}
+
 func main() {
-	argsWithoutProg := os.Args[1:]
-	if len(argsWithoutProg) == 0 {
-		fmt.Println("Need to pass port as an argument")
-		return
+	log.Info(os.Environ())
+	port := os.Getenv("PORT")
+	log.Infof("Port: %v", port)
+	if len(port) == 0 {
+		log.Fatalf("Port wasn't passed. An env variable for port must be passed")
 	}
 
-	http.HandleFunc("/login", loginHandler)
-	http.HandleFunc("/token", TokenHandler)
+	r := mux.NewRouter()
+	r.HandleFunc("/", newHandler)
+	r.HandleFunc("/login", loginHandler)
+	r.HandleFunc("/token", TokenHandler)
+	r.HandleFunc("/version", versionHandler)
+	r.HandleFunc("/status", statusHandler)
+	http.Handle("/", r)
 	http.Handle("/metrics", promhttp.Handler())
-	http.ListenAndServe(":"+argsWithoutProg[0], nil)
+	log.Infof("Starting up server")
+
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
